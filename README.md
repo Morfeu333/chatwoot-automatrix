@@ -25,7 +25,9 @@ Docker: chatwoot-redis
 ```
 
 **Server:** `automatrix-X99` (Tailscale `100.88.89.9`), Ubuntu, 64 GB RAM  
-**Chatwoot version:** `chatwoot/chatwoot:latest` (confirmed v4.12.1 at setup)
+**Chatwoot image:** `chatwoot/chatwoot:latest` (the deployed digest/version has not been re-verified)
+
+Before changing the image tag, record the version and digest currently running on the server and take a database backup. Do not assume the current deployment is v4.12.1 based on the original setup note.
 
 ---
 
@@ -56,9 +58,11 @@ Two separate Meta Developer apps are used — one per product line:
 | **wepwep** | `1920100368710512` | WhatsApp Cloud API |
 | **autocem** | `1170128801145266` | Facebook Pages + Instagram Business Login |
 
-### Why two apps?
+### App selection and readiness
 
-WhatsApp Cloud API and Instagram Business Login have incompatible OAuth flows and webhook configurations. Keeping them separate avoids conflicts and makes it easier to manage permissions independently.
+These are the apps documented for the existing installation, not a verified recommendation for a customer onboarding product. The October 12, 2026 read-only Meta audit found that none of the 33 apps whose App Review status could be checked had Advanced Access for both `whatsapp_business_management` and `whatsapp_business_messaging`. The two restricted apps could not be confirmed. Do not offer third-party customer onboarding through these apps until the selected app has the required access and the Tech Provider setup is complete.
+
+The historical separation between WhatsApp and Instagram apps is a deployment choice, not a Meta requirement. Reassess it against the selected business, app permissions, and review status before changing app IDs or secrets.
 
 ---
 
@@ -148,8 +152,8 @@ Copy `.env.example` to `.env` and set:
 2. Set webhook URL: `https://chatwoot.automatrix.site/webhooks/whatsapp/%2B15556315763`
    - Replace `%2B15556315763` with your URL-encoded phone number (leading `+` → `%2B`)
    - The verify token must match `FACEBOOK_VERIFY_TOKEN` in `.env`
-3. Subscribe to webhook fields: `messages`
-4. Generate a **System User token** with `whatsapp_business_messaging` permission (never expires)
+3. For this existing, manually configured inbox, subscribe to `messages`. A customer onboarding flow also needs the app's `account_update` webhook subscription.
+4. Create a token with the required WhatsApp permissions and store it only in Chatwoot's protected configuration. Tokens can be revoked and permissions can change; do not rely on a token being permanent.
 
 > **Critical:** Chatwoot matches the webhook by **phone number**, not by phone number ID. The URL path must be the actual number (e.g., `+15556315763` → `%2B15556315763`), not the numeric Phone Number ID from Meta.
 
@@ -162,7 +166,7 @@ Copy `.env.example` to `.env` and set:
    - Business Account ID: from Meta Business Manager
    - API Key: the System User token
 
-### Token rotation
+### Token replacement
 
 When a token expires (you'll see "Failed to send" errors):
 
@@ -174,6 +178,27 @@ docker exec -it chatwoot-rails bundle exec rails c
 channel = Channel::Whatsapp.find_by(phone_number: '+15556315763')
 channel.update!(provider_config: channel.provider_config.merge('api_key' => 'NEW_TOKEN_HERE'))
 ```
+
+Do not paste tokens into this repository, issue comments, or logs. Prefer rotating the credential through Meta and Chatwoot's supported settings, then verify the channel without sending a customer message.
+
+### Customer onboarding with Embedded Signup
+
+The steps above create a manually configured inbox for a number already under your control. They do not provide self-serve onboarding for other businesses. Chatwoot v4.12.1 includes a native Embedded Signup flow; the code path must be checked against the exact deployed version before enabling it.
+
+For a controlled implementation, configure the WhatsApp app in Meta for Facebook Login for Business and Embedded Signup v4, then set these Chatwoot global configuration values in Super Admin → Settings → App Config (or as protected environment configuration):
+
+| Chatwoot setting | Value |
+|---|---|
+| `WHATSAPP_APP_ID` | The selected Meta app ID |
+| `WHATSAPP_APP_SECRET` | The selected Meta app secret; treat as a secret |
+| `WHATSAPP_CONFIGURATION_ID` | The Embedded Signup configuration ID |
+| `WHATSAPP_API_VERSION` | A Graph API version supported by the selected Chatwoot release |
+
+Use placeholders in documentation and keep real values out of Git. The public HTTPS application URL, OAuth configuration, Meta app review, required Advanced Access, business verification, and webhook subscriptions must all be ready before customer onboarding. Subscribe to both `messages` and `account_update` as required by the chosen Meta flow.
+
+Embedded Signup leaves business assets owned by the customer and exchanges the authorization code server-side. Treat business, WABA, phone-number, and inbox IDs as strings throughout integrations; never coerce them to JavaScript numbers. Reconcile the WABA and number returned by the flow before creating an inbox. Provide distinct paths for a new number, an already registered number, migration, and WhatsApp Business App Coexistence. For Coexistence, follow Meta's flow and do not register a number that is already registered.
+
+The Meta audit on October 12, 2026 found no confirmed Advanced Access for both required WhatsApp permissions among the reviewable apps. It also found that the currently configured `wepwep` webhook exposes only `messages`; the audit did not test event delivery. These are blockers to third-party onboarding, not evidence that the existing manually configured inbox is broken.
 
 ---
 
